@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teacher Dashboard: ELA FAST Review</title>
+<style>
+  body{font-family:Arial,sans-serif;margin:0;background:#f3f6fb;color:#1d2b3a;line-height:1.45}
+  header{background:#12395f;color:#fff;padding:14px 20px}
+  header h1{margin:0;font-size:1.3rem}
+  main{max-width:1150px;margin:auto;padding:16px}
+  .card{background:#fff;border-radius:10px;padding:16px;margin-bottom:16px;box-shadow:0 1px 4px rgba(0,0,0,.12)}
+  button{cursor:pointer;border:none;border-radius:6px;padding:7px 12px;font-size:.95rem;background:#12395f;color:#fff;margin:2px}
+  button.alt{background:#fff;color:#12395f;border:1px solid #12395f}
+  button.tab{background:#fff;color:#12395f;border:2px solid #12395f}
+  button.tab.on{background:#12395f;color:#fff}
+  table{border-collapse:collapse;width:100%;font-size:.9rem}
+  th,td{border:1px solid #c8d3e0;padding:6px 8px;text-align:center}
+  th{background:#e3ebf7} td.l,th.l{text-align:left}
+  .g{background:#d6f0dc}.y{background:#fff1c2}.r{background:#f8d0cc}.n{color:#888}
+  .dok{display:inline-block;font-size:.75rem;font-weight:bold;color:#fff;border-radius:10px;padding:1px 9px;margin-right:6px}
+  .dok1{background:#2e8b57}.dok2{background:#d98200}.dok3{background:#b3261e}
+  .q{border-left:5px solid #ccc;padding:8px 12px;margin:10px 0;background:#fafafa}
+  .q.ok{border-color:#2e8b57}.q.no{border-color:#b3261e}.q.wr{border-color:#6a2c91}.q.un{border-color:#aaa}
+  .resp{white-space:pre-wrap;background:#fff;border:1px solid #ddd;padding:8px;border-radius:6px}
+  .note{font-size:.85rem;color:#555}
+  #msg{color:#1b7a3a;font-size:.9rem}
+  .scroll{overflow-x:auto}
+  @media print{ header,.noprint{display:none} body{background:#fff} }
+</style>
+</head>
+<body>
+<header><h1>🧑‍🏫 Teacher Dashboard: ELA FAST Review</h1></header>
+<main>
+  <div class="card noprint">
+    <p><b>Step 1.</b> Load the quiz file (Set 1 or Set 2 .html):
+      <input type="file" id="quizFile" accept=".html,.htm"></p>
+    <p><b>Step 2.</b> Load student work:
+      <input type="file" id="stuFiles" accept=".json" multiple>
+      or
+      <button class="alt" onclick="loadLocal()">Load from this device</button>
+      <label class="note">storage prefix: <input type="text" id="prefix" value="fast6b_" size="10"></label>
+      <span class="note">(Set 1 = fast6_ &nbsp; Set 2 = fast6b_)</span></p>
+    <p id="msg">Waiting for the quiz file...</p>
+  </div>
+  <div class="noprint" id="tabs"></div>
+  <div id="view"></div>
+</main>
+
+<script>
+let Q=null, students=[], tab="class", picked="";
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const L="ABCDEF";
+
+/* ===== LOADING ===== */
+$("quizFile").addEventListener("change",e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const t=r.result, a=t.indexOf("const S ="), b=t.indexOf("/* ===== STATE");
+      if(a<0||b<0) throw new Error("Could not find the questions in that file.");
+      let code=t.slice(a+9,b).trim(); if(code.endsWith(";")) code=code.slice(0,-1);
+      Q=new Function("return "+code)();
+      const n=Q.reduce((s,x)=>s+x.qs.length,0);
+      $("msg").textContent="✔ Quiz loaded: "+Q.length+" sections, "+n+" questions. Now load student work.";
+      render();
+    }catch(err){ $("msg").textContent="⚠ "+err.message; }
+  };
+  r.readAsText(f);
+});
+$("stuFiles").addEventListener("change",e=>{
+  const files=[...e.target.files]; let left=files.length;
+  files.forEach(f=>{
+    const r=new FileReader();
+    r.onload=()=>{
+      try{
+        const d=JSON.parse(r.result);
+        const name=d.name||f.name.replace(/^ELA_(Set2_)?/,"").replace(/\.json$/,"");
+        addStudent(name,d.a||{},d.c||{});
+      }catch(err){ $("msg").textContent="⚠ Could not read "+f.name; }
+      if(--left===0){ $("msg").textContent="✔ "+students.length+" student(s) loaded."; render(); }
+    };
+    r.readAsText(f);
+  });
+});
+function loadLocal(){
+  const p=$("prefix").value.trim(); let n=0;
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(k.startsWith(p)&&k!==p+"lastname"){
+      try{ const d=JSON.parse(localStorage.getItem(k)); addStudent(k.slice(p.length),d.a||{},d.c||{}); n++; }catch(e){}
+    }
+  }
+  $("msg").textContent=n?("✔ Loaded "+n+" student(s) from this device."):"No saved students found with that prefix on this device.";
+  render();
+}
+function addStudent(name,a,c){
+  students=students.filter(s=>s.name.toLowerCase()!==name.toLowerCase());
+  students.push({name,a,c});
+  students.sort((x,y)=>x.name.localeCompare(y.name));
+}
+
+/* ===== SCORING ===== */
+function hasAns(a){ return a!==undefined&&a!==""&&!(Array.isArray(a)&&!a.length); }
+function right(q,a){
+  if(!hasAns(a)) return false;
+  if(q.type==="multi") return JSON.stringify([...a].sort())===JSON.stringify([...q.a].sort());
+  return a===q.a[0];
+}
+function ansText(q,a){
+  if(!hasAns(a)) return "(no answer)";
+  const arr=Array.isArray(a)?a:[a];
+  return arr.map(k=>L[k]+". "+q.o[k]).join("  |  ");
+}
+function stats(s){
+  const o={sec:[],dok:{1:{r:0,s:0,t:0},2:{r:0,s:0,t:0},3:{r:0,s:0,t:0}},r:0,sub:0,mc:0,srSub:0,sr:0};
+  Q.forEach((sec,i)=>{
+    const z={r:0,s:0,t:0};
+    sec.qs.forEach((q,j)=>{
+      const id="s"+i+"q"+j, lk=!!s.c[id];
+      if(q.type==="sr"){ o.sr++; if(lk) o.srSub++; }
+      else{
+        o.mc++; z.t++; o.dok[q.dok].t++;
+        if(lk){ o.sub++; z.s++; o.dok[q.dok].s++; }
+        if(lk&&right(q,s.a[id])){ o.r++; z.r++; o.dok[q.dok].r++; }
+      }
+    });
+    o.sec.push(z);
+  });
+  return o;
+}
+function cell(r,s){
+  if(!s) return '<td class="n">—</td>';
+  const p=Math.round(r/s*100), c=p>=80?"g":p>=60?"y":"r";
+  return `<td class="${c}">${p}%</td>`;
+}
+
+/* ===== VIEWS ===== */
+function render(){
+  if(!Q){ $("tabs").innerHTML=""; $("view").innerHTML=""; return; }
+  const T=[["class","Class Scores"],["skills","Skills to Reteach"],["items","Question Analysis"],["student","Student Review"]];
+  $("tabs").innerHTML=T.map(t=>`<button class="tab ${tab===t[0]?"on":""}" onclick="tab='${t[0]}';render()">${t[1]}</button>`).join("");
+  if(!students.length){ $("view").innerHTML='<div class="card">No student work loaded yet.</div>'; return; }
+  $("view").innerHTML=({class:vClass,skills:vSkills,items:vItems,student:vStudent})[tab]();
+}
+
+function vClass(){
+  const head=Q.map((s,i)=>`<th>Sec ${i+1}<br>accuracy</th>`).join("");
+  let rows="", csv=[["Student","Locked MC","Correct","Accuracy %"].concat(Q.map((s,i)=>"Section "+(i+1)+" %"),["DOK1 %","DOK2 %","DOK3 %","Written submitted"]).join(",")];
+  let tot={r:0,sub:0};
+  students.forEach(s=>{
+    const o=stats(s); tot.r+=o.r; tot.sub+=o.sub;
+    const acc=o.sub?Math.round(o.r/o.sub*100):"";
+    const pc=(r,t)=>t?Math.round(r/t*100):"";
+    rows+=`<tr><td class="l"><b>${esc(s.name)}</b></td><td>${o.sub} / ${o.mc}</td><td>${o.r}</td>${cell(o.r,o.sub)}`
+      +o.sec.map(z=>cell(z.r,z.s)).join("")
+      +[1,2,3].map(d=>cell(o.dok[d].r,o.dok[d].s)).join("")
+      +`<td>${o.srSub} / ${o.sr}</td></tr>`;
+    
